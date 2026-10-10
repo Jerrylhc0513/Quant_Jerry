@@ -46,7 +46,10 @@ W = "stretch"
 # ============================== Reading ==============================
 @st.cache_data(ttl=300)
 def _read_csv(path: str, mtime: float, **kw) -> pd.DataFrame | None:
-    df = pd.read_csv(path, **kw)
+    try:
+        df = pd.read_csv(path, **kw)
+    except (pd.errors.EmptyDataError, ValueError):     # an empty file (e.g. no trades yet)
+        return None
     return df if len(df.columns) else None
 
 
