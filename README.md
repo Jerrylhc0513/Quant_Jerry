@@ -73,6 +73,29 @@ python backtest.py --profile model --weighting equal
 python model.py --refresh                                     :: redo the yearly selections after changing factors
 ```
 
+## Event-driven setups (`event.py`)
+
+A separate way to trade, closer to how a person picks stocks: buy one stock when its setup looks right, then
+leave it alone until it hits the take-profit line, the stop-loss line or the maximum holding time.
+
+| Setup | Looks for | Exits | Slots |
+|---|---|---|---|
+| `stealth` | small/mid caps ($1M–$30M daily volume) with volume rising steadily while the price moves sideways | +50% / −20% / 126 days | 10 |
+| `swing` | liquid stocks right after a price or volume burst | +8% / −5% / 10 days | 5 |
+
+A LightGBM model estimates the chance that the profit line is hit before the stop line, trained walk-forward
+(each year only on trades whose outcome was already known). The backtest compares the model's picks with
+random picks from the same pool and the same exits; the model is only useful if it clearly beats them.
+
+```
+python event.py backtest --setup stealth
+python event.py backtest --setup swing
+python event.py backtest --setup stealth --tp 1.0 --sl 0.25 --max-days 189
+python event.py today --setup stealth
+```
+`today` lists today's candidates with their probability and exit lines, and checks the positions you list in
+`portfolio\event_<setup>.csv` (`symbol,entry_date,entry_price,shares`).
+
 ## Every day
 
 1. Run `setup_task.bat` once. The job then runs every weekday at 8:30 pm.
