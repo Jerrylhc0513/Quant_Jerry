@@ -202,7 +202,8 @@ def update_companies(symbols: set[str]) -> pd.DataFrame:
         columns=["symbol", "cik", "title", "sic", "sic_time"])
     comp = tick.merge(old[["cik", "sic", "sic_time"]].drop_duplicates("cik"), on="cik", how="left")
     now = time.time()
-    need = comp[comp["sic"].isna() | (now - comp["sic_time"].fillna(0) > SIC_REFRESH_DAYS * 86400)]
+    sic_time = pd.to_numeric(comp["sic_time"], errors="coerce").fillna(0.0)
+    need = comp[comp["sic"].isna() | (now - sic_time > SIC_REFRESH_DAYS * 86400)]
     ciks = need["cik"].drop_duplicates().tolist()
     if ciks:
         log.info("Fetching SIC codes for %d companies", len(ciks))
