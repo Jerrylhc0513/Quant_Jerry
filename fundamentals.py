@@ -270,23 +270,35 @@ def _entries(facts: dict, tags: list[tuple[str, str]]) -> pd.DataFrame:
 
 
 def _quarterly(df: pd.DataFrame) -> pd.DataFrame:
-    """Discrete quarterly values (end, val, filed) from a flow concept, deriving Q4 = FY - Q1..Q3."""
+    """Discrete quarterly values (end, val, filed) from a flow concept.
+    Sources, in order: reported 3-month values; differences of year-to-date values that share a fiscal-year
+    start (cash-flow statements are usually only reported YTD: 3, 6, 9, 12 months); Q4 = FY - (Q1 + Q2 + Q3)."""
     if df.empty:
         return pd.DataFrame(columns=["end", "val", "filed"])
+    df = df.dropna(subset=["start"])
     dur = (df["end"] - df["start"]).dt.days
     q = df[(dur >= 75) & (dur <= 105)][["start", "end", "val", "filed"]]
-    a = df[(dur >= 340) & (dur <= 390)]
     extra = []
+    # year-to-date differences: consecutive cumulative values with the same start, one quarter apart
+    ytd = df[(dur >= 75) & (dur <= 390)].assign(dur=dur)
+    for _, g in ytd.groupby("start"):
+        g = g.sort_values("end")
+        for (_, a), (_, b) in zip(g.iloc[:-1].iterrows(), g.iloc[1:].iterrows()):
+            if 75 <= (b["end"] - a["end"]).days <= 105:
+                extra.append({"start": a["end"] + pd.Timedelta(days=1), "end": b["end"],
+                              "val": b["val"] - a["val"], "filed": max(a["filed"], b["filed"])})
+    a = df[(dur >= 340) & (dur <= 390)]
     for _, r in a.iterrows():
         inside = q[(q["start"] >= r["start"] - pd.Timedelta(days=10)) & (q["end"] < r["end"] - pd.Timedelta(days=30))]
         inside = inside.drop_duplicates("end")
-        if len(inside) == 3 and not (q["end"] == r["end"]).any():
+        if len(inside) == 3:
             extra.append({"start": inside["end"].max() + pd.Timedelta(days=1), "end": r["end"],
                           "val": r["val"] - inside["val"].sum(), "filed": r["filed"]})
     if extra:
         q = pd.concat([q, pd.DataFrame(extra)], ignore_index=True)
-    q = q.sort_values(["end", "filed"]).drop_duplicates("end", keep="first")
-    return q[["end", "val", "filed"]].reset_index(drop=True)
+    # a directly reported quarter wins over a derived one (it comes first); otherwise the earliest filing
+    q = q.reset_index(drop=True).reset_index().sort_values(["end", "index"]).drop_duplicates("end", keep="first")
+    return q[["end", "val", "filed"]].sort_values("end").reset_index(drop=True)
 
 
 def _ttm(q: pd.DataFrame) -> pd.DataFrame:
@@ -333,10 +345,13 @@ def extract(facts_json: dict) -> pd.DataFrame:
 
     quarters = {k: _quarterly(_entries(facts, tags)) for k, tags in FLOW_TAGS.items()}
     gp = quarters["gp"]
-    if gp.empty and len(quarters["rev"]) and len(quarters["cogs"]):
+    if len(quarters["rev"]) and len(quarters["cogs"]):    # fill quarters without GrossProfit: revenue - cost
         m = quarters["rev"].merge(quarters["cogs"], on="end", suffixes=("_r", "_c"))
-        gp = pd.DataFrame({"end": m["end"], "val": m["val_r"] - m["val_c"],
-                           "filed": m[["filed_r", "filed_c"]].max(axis=1)})
+        m = m[~m["end"].isin(gp["end"])]
+        if len(m):
+            gp = pd.concat([gp, pd.DataFrame({"end": m["end"], "val": m["val_r"] - m["val_c"],
+                                              "filed": m[["filed_r", "filed_c"]].max(axis=1)})], ignore_index=True)
+            gp = gp.sort_values("end").reset_index(drop=True)
     quarters["gp"] = gp
     for k in ("ni", "rev", "gp", "opinc", "cfo"):
         add(f"{k}_ttm", _ttm(quarters[k]))
