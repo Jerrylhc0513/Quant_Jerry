@@ -349,8 +349,9 @@ def extract(facts_json: dict) -> pd.DataFrame:
         m = quarters["rev"].merge(quarters["cogs"], on="end", suffixes=("_r", "_c"))
         m = m[~m["end"].isin(gp["end"])]
         if len(m):
-            gp = pd.concat([gp, pd.DataFrame({"end": m["end"], "val": m["val_r"] - m["val_c"],
-                                              "filed": m[["filed_r", "filed_c"]].max(axis=1)})], ignore_index=True)
+            fill = pd.DataFrame({"end": m["end"], "val": m["val_r"] - m["val_c"],
+                                 "filed": m[["filed_r", "filed_c"]].max(axis=1)})
+            gp = fill if gp.empty else pd.concat([gp, fill], ignore_index=True)
             gp = gp.sort_values("end").reset_index(drop=True)
     quarters["gp"] = gp
     for k in ("ni", "rev", "gp", "opinc", "cfo"):
