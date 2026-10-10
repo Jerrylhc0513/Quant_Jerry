@@ -20,6 +20,9 @@ if not errorlevel 1 (
 for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"') do set TODAY=%%i
 git commit -m "Daily site update %TODAY%"
 if errorlevel 1 exit /b 1
+REM bring in code updates pushed from elsewhere first, so the push is never rejected
+git pull --no-rebase --no-edit
+if errorlevel 1 exit /b 1
 git push
 if errorlevel 1 exit /b 1
 echo Published.
