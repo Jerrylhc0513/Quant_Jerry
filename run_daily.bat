@@ -15,7 +15,7 @@ set HORIZON=5
 REM Download minute bars and compute minute factors: 1 = yes, 0 = no
 set MINUTE=1
 REM Push the web page snapshot to GitHub after each run: 1 = yes, 0 = no
-set PUBLISH=0
+set PUBLISH=1
 
 cd /d "%~dp0"
 set PYTHONUTF8=1
