@@ -10,6 +10,8 @@ setlocal
 REM ---- settings ----
 REM Score method: wf (walk-forward, recommended) / equal / ic / lgbm
 set METHOD=wf
+REM Forecast horizon in trading days for the score (5 = weekly signal, 20 = monthly)
+set HORIZON=5
 REM Download minute bars and compute minute factors: 1 = yes, 0 = no
 set MINUTE=1
 REM Push the web page snapshot to GitHub after each run: 1 = yes, 0 = no
@@ -42,7 +44,7 @@ REM A failure here is not fatal: factors fall back to the facts already download
 if "%DOW%"=="Monday" "%PY%" fundamentals.py update >> "%LOG%" 2>&1
 "%PY%" factors.py %FFLAG% >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
-"%PY%" model.py --method %METHOD% >> "%LOG%" 2>&1
+"%PY%" model.py --method %METHOD% --horizon %HORIZON% >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
 "%PY%" daily_signal.py --method %METHOD% >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
