@@ -414,6 +414,8 @@ with tab_fac:
                                        colorscale=[[0, C["neg"]], [0.5, C["mid"]], [1, C["pos"]]], xgap=2, ygap=2,
                                        hovertemplate="%{y} × %{x}<br>%{z:+.2f}<extra></extra>"))
             fig.update_layout(height=max(400, 20 * len(corr)), margin=dict(l=10, r=10, t=10, b=10))
+            fig.update_yaxes(autorange="reversed")             # diagonal runs top-left to bottom-right
+            fig.update_xaxes(side="top", tickangle=-60)
             st.plotly_chart(fig, width=W, theme="streamlit")
             st.caption("The selection skips a factor whose |correlation| with an already selected one is 0.5 or more.")
 
