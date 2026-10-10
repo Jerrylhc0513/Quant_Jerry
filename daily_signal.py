@@ -114,9 +114,8 @@ def load_holdings(acct: Account = REAL) -> tuple[pd.DataFrame, float]:
 
 
 def save_holdings(pos: pd.DataFrame, cash: float, acct: Account = REAL) -> None:
-    out = pd.concat([pos[["symbol", "shares", "cost_basis"]],
-                     pd.DataFrame([{"symbol": "CASH", "shares": round(cash, 2), "cost_basis": 1.0}])],
-                    ignore_index=True)
+    cash_row = pd.DataFrame([{"symbol": "CASH", "shares": round(cash, 2), "cost_basis": 1.0}])
+    out = pd.concat([pos[["symbol", "shares", "cost_basis"]], cash_row], ignore_index=True) if len(pos) else cash_row
     acct.dir.mkdir(parents=True, exist_ok=True)
     out.to_csv(acct.holdings, index=False)
 
