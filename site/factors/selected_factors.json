@@ -1,0 +1,21 @@
+{
+  "cutoff": "2025-12-31",
+  "horizon": 5,
+  "entry": "open",
+  "neutralize": [
+    "sector",
+    "log_adv_60"
+  ],
+  "factors": {
+    "resid_mom_12_1": 1
+  },
+  "stats": {
+    "resid_mom_12_1": {
+      "ic_mean": 0.014405224975932971,
+      "icir": 0.0845592937577149,
+      "t_nw": 2.2361719393283854,
+      "ls_net_ann": 0.05996381594507464,
+      "turnover": 0.12212545581164845
+    }
+  }
+}

@@ -1,0 +1,6 @@
+action,symbol,shares,amount_usd,ref_price,rank,score,reason,signal_date
+BUY,RNG,2.4726,196.0,79.27,1,1.9489100202975944,"rank 1, target weight 20.0%",2026-10-09
+BUY,CHYM,6.516,196.0,30.08,2,1.2252925143473326,"rank 2, target weight 20.0%",2026-10-09
+BUY,HNGE,1.9048,196.0,102.9,3,1.090871108663391,"rank 3, target weight 20.0%",2026-10-09
+BUY,CART,4.1039,196.0,47.76,4,0.8947584012925183,"rank 4, target weight 20.0%",2026-10-09
+BUY,ECHO,2.0666,196.0,94.84,5,0.883650042223068,"rank 5, target weight 20.0%",2026-10-09
