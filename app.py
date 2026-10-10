@@ -147,8 +147,156 @@ h_model = series("model/history.csv", "nav")
 h_real = series("real/history.csv", "nav")
 acc = m.get("accounts", {})
 
-tab_all, tab_model, tab_real, tab_bt, tab_fac = st.tabs(["Overview", "Model account", "Real account",
-                                                          "Backtest", "Factors"])
+tab_str, tab_all, tab_model, tab_real, tab_bt, tab_fac = st.tabs(
+    ["Strategies", "Overview", "Model account", "Real account", "Backtest", "Factors"])
+
+# ---------------------------------------------------------------- Strategies (strategies/*.py)
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#b04fc7", "#d4a017", "#e34948", "#3bb5c9", "#8a8984", "#6d5fd5", "#7fa832"]
+
+
+def multi_chart(curves: dict, title: str, height: int = 420) -> go.Figure:
+    fig = go.Figure()
+    for k, (name, s) in enumerate(curves.items()):
+        s = s.dropna()
+        if len(s) < 2:
+            continue
+        dash = "dash" if name.lower().startswith("spy") else "solid"
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, name=name, mode="lines", hovertemplate="%{y:+.1%}",
+                                 line=dict(width=2, color=SERIES[k % len(SERIES)], dash=dash)))
+    fig.update_layout(height=height, margin=dict(l=10, r=10, t=40, b=10), hovermode="x unified",
+                      title=dict(text=title, font=dict(size=14)), legend=dict(orientation="h", y=-0.15, x=0))
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor=C["grid"], tickformat=".0%", zerolinecolor=C["grid"])
+    return fig
+
+
+with tab_str:
+    strats = m.get("strategies", [])
+    if not strats:
+        empty("No strategies exported yet. Run `python run_strategies.py backtest`, `python run_strategies.py live`, "
+              "then `python export_site.py`.")
+    else:
+        st.caption("Every file in strategies/ runs through the same engine: orders fill at the next open, costs "
+                   "charged, profit / stop / time exits checked daily. Paper accounts start with $100,000 on the day "
+                   "they go live, so their records are genuinely out-of-sample.")
+        # ---- paper accounts ----
+        st.subheader("Paper accounts (live)")
+        live_rows, live_curves = [], {}
+        for s_ in strats:
+            h = series(f"strategies/{s_['name']}/live_history.csv", "nav")
+            if h is None or len(h) < 1:
+                continue
+            base = h.iloc[0] if len(h) else np.nan
+            live_curves[s_["title"]] = h / 100000.0 - 1 if len(h) else h
+            live_rows.append({"Strategy": s_["title"], "Since": h.index[0].date(), "NAV": h.iloc[-1],
+                              "Total": h.iloc[-1] / 100000.0 - 1,
+                              "Max drawdown": (h / np.maximum.accumulate(np.r_[100000.0, h.values])[1:] - 1).min(),
+                              "Positions": s_.get("n_pos", 0)})
+        if live_rows:
+            lt = pd.DataFrame(live_rows).sort_values("Total", ascending=False)
+            st.dataframe(lt.assign(Total=lt["Total"] * 100, **{"Max drawdown": lt["Max drawdown"] * 100}),
+                         hide_index=True, width=W,
+                         column_config={"NAV": st.column_config.NumberColumn(format="$%.0f"),
+                                        "Total": st.column_config.NumberColumn(format="%+.1f%%"),
+                                        "Max drawdown": st.column_config.NumberColumn(format="%.1f%%")})
+            if any(len(v.dropna()) >= 2 for v in live_curves.values()):
+                st.plotly_chart(multi_chart(live_curves, "Paper accounts: total return since go-live"),
+                                width=W, theme="streamlit")
+        else:
+            empty("No paper account has run yet (`python run_strategies.py live`).")
+
+        # ---- backtests ----
+        st.subheader("Backtests")
+        bs = csv("strategies/backtest_summary.csv", index_col=0)
+        if bs is None:
+            empty("No backtests yet (`python run_strategies.py backtest`).")
+        else:
+            show = bs.copy()
+            for c_ in ["ann_return", "ann_vol", "max_drawdown", "spy_ann", "excess_ann", "win_rate", "avg_trade"]:
+                if c_ in show:
+                    show[c_] = show[c_] * 100
+            cols = [c_ for c_ in ["title", "start", "end", "ann_return", "ann_vol", "sharpe", "max_drawdown", "spy_ann",
+                                  "excess_ann", "trades", "win_rate", "avg_trade", "avg_days"] if c_ in show]
+            st.dataframe(show[cols].sort_values("sharpe", ascending=False).rename(columns={
+                "title": "Strategy", "start": "From", "end": "To", "ann_return": "Ann. return", "ann_vol": "Ann. vol",
+                "sharpe": "Sharpe", "max_drawdown": "Max DD", "spy_ann": "SPY ann.", "excess_ann": "vs SPY",
+                "trades": "Trades", "win_rate": "Win rate", "avg_trade": "Avg trade", "avg_days": "Avg days"}),
+                hide_index=True, width=W, column_config={
+                    **{k: st.column_config.NumberColumn(format="%+.1f%%") for k in
+                       ["Ann. return", "SPY ann.", "vs SPY", "Avg trade"]},
+                    **{k: st.column_config.NumberColumn(format="%.1f%%") for k in ["Ann. vol", "Max DD", "Win rate"]},
+                    "Sharpe": st.column_config.NumberColumn(format="%.2f"),
+                    "Avg days": st.column_config.NumberColumn(format="%.0f")})
+            navs = {}
+            for s_ in strats:
+                nd_ = csv(f"strategies/{s_['name']}/backtest_nav.csv", parse_dates=["date"])
+                if nd_ is not None and len(nd_) > 1:
+                    navs[s_["title"]] = nd_.set_index("date")
+            if navs:
+                same = st.toggle("Start all curves on the same date", value=True)
+                start_ = max(v.index[0] for v in navs.values()) if same else None
+                curves = {}
+                for t_, v in navs.items():
+                    x = v["nav"] if start_ is None else v.loc[v.index >= start_, "nav"]
+                    curves[t_] = x / x.iloc[0] - 1 if len(x) else x
+                spy_src = max(navs.values(), key=len)
+                if "spy" in spy_src and spy_src["spy"].notna().any():
+                    x = spy_src["spy"] if start_ is None else spy_src.loc[spy_src.index >= start_, "spy"]
+                    curves["SPY"] = x / x.dropna().iloc[0] - 1
+                st.plotly_chart(multi_chart(curves, "Backtests: cumulative return"), width=W, theme="streamlit")
+            st.caption("Walk-forward strategies (factor scores, stealth, swing) are out-of-sample. Buy-and-hold of names "
+                       "chosen today carries hindsight bias.")
+
+        # ---- one strategy in detail ----
+        st.subheader("Strategy detail")
+        pick = st.selectbox("Strategy", [s_["title"] for s_ in strats])
+        s_ = next(x for x in strats if x["title"] == pick)
+        st.caption(f"`strategies/…` name: **{s_['name']}** · {s_['description']}")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Open positions (paper account)**")
+            pos = csv(f"strategies/{s_['name']}/live_positions.csv")
+            if pos is None or pos.empty:
+                st.write("None")
+            else:
+                st.dataframe(pos.assign(ret=pos["ret"] * 100, tp=pos["tp"] * 100, sl=-pos["sl"] * 100),
+                             hide_index=True, width=W, column_config={
+                    "value": st.column_config.NumberColumn("Value", format="$%.0f"),
+                    "ret": st.column_config.NumberColumn("Return", format="%+.1f%%"),
+                    "tp": st.column_config.NumberColumn("Profit line", format="%+.0f%%"),
+                    "sl": st.column_config.NumberColumn("Stop line", format="%+.0f%%"),
+                    "max_days": st.column_config.NumberColumn("Max days", format="%.0f")})
+            od = csv(f"strategies/{s_['name']}/live_orders.csv")
+            if od is not None and len(od):
+                st.markdown("**Orders for the next open**")
+                st.dataframe(od[[c_ for c_ in ["symbol", "weight", "cash_frac", "tp", "sl", "max_days", "reason"] if c_ in od]],
+                             hide_index=True, width=W)
+        with c2:
+            st.markdown("**Closed trades (paper account)**")
+            tr_ = csv(f"strategies/{s_['name']}/live_trades.csv")
+            if tr_ is None or tr_.empty:
+                st.write("None yet")
+            else:
+                st.dataframe(tr_.iloc[::-1].assign(ret_net=tr_.iloc[::-1]["ret_net"] * 100), hide_index=True, width=W,
+                             column_config={"ret_net": st.column_config.NumberColumn("Return", format="%+.1f%%")})
+        nd_ = csv(f"strategies/{s_['name']}/backtest_nav.csv", parse_dates=["date"])
+        if nd_ is not None and len(nd_) > 1:
+            nd_ = nd_.set_index("date")
+            yearly = {}
+            for c_, lab in {"nav": "Strategy", "spy": "SPY"}.items():
+                if c_ in nd_ and nd_[c_].notna().any():
+                    last_ = nd_[c_].groupby(nd_.index.year).last()
+                    b_ = last_.shift(1)
+                    b_.iloc[0] = nd_[c_].dropna().iloc[0]
+                    yearly[lab] = (last_ / b_ - 1) * 100
+            yt = pd.DataFrame(yearly)
+            yt.index = yt.index.astype(str)
+            st.markdown("**Backtest calendar-year returns**")
+            st.dataframe(yt.T, width=W, column_config={c_: st.column_config.NumberColumn(format="%+.1f%%") for c_ in yt.index})
+            bt_ = csv(f"strategies/{s_['name']}/backtest_trades.csv")
+            if bt_ is not None and len(bt_):
+                with st.expander(f"Backtest trades (latest {len(bt_)})"):
+                    st.dataframe(bt_.iloc[::-1], hide_index=True, width=W)
 
 # ---------------------------------------------------------------- Overview
 with tab_all:

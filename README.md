@@ -73,6 +73,32 @@ python backtest.py --profile model --weighting equal
 python model.py --refresh                                     :: redo the yearly selections after changing factors
 ```
 
+## Strategies: one idea per file (`strategies/`, `engine.py`, `run_strategies.py`)
+
+Every idea lives in its own file in `strategies/` and runs through one engine (`engine.py`), so they can be
+compared fairly: orders fill at the next open, costs are charged, and profit / stop / time exits are checked
+every day with the day's high and low. The same code produces the backtest and the live paper account.
+
+| File | Strategies | Idea |
+|---|---|---|
+| `buy_hold.py` | `spy_hold`, `nvda_googl_hold` | buy once, never sell (SPY is the benchmark) |
+| `factor_ranking.py` | `factor_weekly25`, `factor_monthly5` | multi-factor ranking from `model.py` scores |
+| `stealth.py` | `stealth` | small/mid caps with rising volume and a sideways price; +50% / −20% / 126 days |
+| `swing.py` | `swing` | hot stocks after a price/volume burst; +8% / −5% / 10 days |
+
+```
+python run_strategies.py list
+python run_strategies.py backtest                 :: all strategies, comparison table
+python run_strategies.py backtest stealth swing   :: only some
+python run_strategies.py live                     :: advance every $100,000 paper account (run_daily.bat does it)
+```
+The web page's **Strategies** tab shows the comparison, every paper account and each strategy's positions and
+trades. run_daily.bat updates the paper accounts every day and re-runs all backtests on Fridays.
+
+**Adding an idea**: copy `strategies/buy_hold.py` to a new file, change `decide()` (what to buy or sell after
+each close; attach `tp`, `sl`, `max_days` to a buy for automatic exits), give it a new `name`. It is picked up
+automatically. Set `enabled = False` to switch one off.
+
 ## Event-driven setups (`event.py`)
 
 A separate way to trade, closer to how a person picks stocks: buy one stock when its setup looks right, then

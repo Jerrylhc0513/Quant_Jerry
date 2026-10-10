@@ -86,6 +86,47 @@ def export_account(acct: S.Account, mk: S.Market, out: Path, show_amounts: bool)
     return info
 
 
+def export_strategies(out: Path) -> list[dict]:
+    """site/strategies/: backtest summary and curves, and each paper account (history, positions, trades)."""
+    import json as _json
+    import run_strategies as RS
+    from strategies import discover
+    out.mkdir(parents=True, exist_ok=True)
+    info = []
+    if (RS.OUT / "summary.csv").exists():
+        shutil.copy(RS.OUT / "summary.csv", out / "backtest_summary.csv")
+    for name, st in discover(include_disabled=True).items():
+        d = out / name
+        d.mkdir(exist_ok=True)
+        row = {"name": name, "title": st.title, "description": st.description, "enabled": st.enabled}
+        nav = RS.OUT / f"{name}_nav.csv"
+        if nav.exists():
+            shutil.copy(nav, d / "backtest_nav.csv")
+        tr = RS.OUT / f"{name}_trades.csv"
+        if tr.exists() and tr.stat().st_size > 1:
+            try:
+                pd.read_csv(tr).tail(500).to_csv(d / "backtest_trades.csv", index=False)
+            except pd.errors.EmptyDataError:
+                pass
+        live = RS.LIVE_DIR / name
+        if (live / "book.json").exists():
+            b = _json.loads((live / "book.json").read_text(encoding="utf-8"))
+            pos = pd.DataFrame(b.get("positions", []))
+            if len(pos):
+                pos["ret"] = pos["g"] - 1
+                pos[["symbol", "entry_date", "value", "ret", "days", "tp", "sl", "max_days"]].to_csv(
+                    d / "live_positions.csv", index=False)
+            pend = pd.DataFrame(b.get("pending", []))
+            if len(pend):
+                pend.to_csv(d / "live_orders.csv", index=False)
+            for f in ("history.csv", "trades.csv"):
+                if (live / f).exists():
+                    shutil.copy(live / f, d / f"live_{f}")
+            row.update(live_since=None, cash=round(b.get("cash", 0.0), 2), n_pos=len(pos))
+        info.append(row)
+    return info
+
+
 def export() -> Path:
     if SITE_DIR.exists():
         shutil.rmtree(SITE_DIR)
@@ -147,7 +188,13 @@ def export() -> Path:
     profiles = {k: {"top_n": p.top_n, "hold_rank": p.hold_rank, "rebalance": p.rebalance,
                     "weighting": p.weighting, "max_per_sector": p.max_per_sector, "capital": p.capital}
                 for k, p in B.PROFILES.items()}
-    meta = {"updated": datetime.now().isoformat(timespec="minutes"), "data_date": mk.last.date().isoformat(),
+    try:
+        strategies = export_strategies(SITE_DIR / "strategies")
+    except Exception as e:                      # the strategy page is optional; never block the export
+        log.warning("Strategy export skipped: %s", e)
+        strategies = []
+
+    meta = {"strategies": strategies, "updated": datetime.now().isoformat(timespec="minutes"), "data_date": mk.last.date().isoformat(),
             "score_date": score_date.date().isoformat() if score_date is not None else None,
             "method": method, "profiles": profiles,
             "universe_size": D.UNIVERSE_SIZE, "model_capital": S.MODEL_CAPITAL, "backtest": bt_name,

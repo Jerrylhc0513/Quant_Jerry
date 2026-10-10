@@ -115,6 +115,17 @@ def load_panels(setup: Setup, end=None) -> dict:
     return pn
 
 
+def panels_from(md, setup: Setup) -> dict:
+    """The same panels as load_panels(), cut from an engine.MarketData that is already in memory."""
+    ok = (md.P >= setup.min_price) & (md.ADV >= setup.adv_min) & (md.ADV <= setup.adv_max)
+    ok = ok.drop(columns=[c for c in D.BENCHMARKS if c in ok.columns])
+    syms = list(ok.columns[ok.any()])
+    pn = {k: getattr(md, k)[syms] for k in ("O", "H", "L", "C", "P", "V", "ADV")}
+    pn["UNI"] = ok[syms]
+    pn["SPY"] = md.C["SPY"].ffill() if "SPY" in md.C else pd.Series(np.nan, index=md.dates)
+    return pn
+
+
 def _trend_corr(x: pd.DataFrame, w: int) -> pd.DataFrame:
     """Rolling correlation of each column with time (+1 = steadily rising)."""
     t = pd.Series(np.arange(len(x), dtype="float64"), index=x.index)

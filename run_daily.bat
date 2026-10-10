@@ -48,12 +48,18 @@ if errorlevel 1 goto fail
 if errorlevel 1 goto fail
 "%PY%" daily_signal.py --method %METHOD% >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
+REM Paper accounts of every strategy in strategies\ (a failure is reported by email but does not stop the run)
+"%PY%" run_strategies.py live >> "%LOG%" 2>&1
+if errorlevel 1 set STRAT_FAIL=1
+REM Fresh backtest of all strategies once a week
+if "%DOW%"=="Friday" "%PY%" run_strategies.py backtest >> "%LOG%" 2>&1
 "%PY%" export_site.py >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
 if "%PUBLISH%"=="1" call publish.bat >> "%LOG%" 2>&1
 if errorlevel 1 goto fail
 
 echo ===== %DATE% %TIME% done ===== >> "%LOG%"
+if "%STRAT_FAIL%"=="1" "%PY%" daily_signal.py notify-error "%LOG%" >> "%LOG%" 2>&1
 exit /b 0
 
 :fail
