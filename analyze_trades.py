@@ -13,8 +13,11 @@ Reads reports/strategies/<name>_trades.csv (written by run_strategies.py backtes
   spy_fwd_*      SPY over the same windows
   spy_trend      SPY above its 200-day average at entry? (market regime)
   price, adv     share price and 60-day dollar volume at the signal
+  f_*            features at the signal: size of the past surge, drawdown from the high, recent returns,
+                 10-day range, volatility, volume build-up, dollar volume ...
 Then prints: results by exit type, how the losses happen, "were the stocks good but the exits bad?",
-results by year / regime / price / liquidity / entry gap, and the 10 best and worst trades.
+results by year / regime / price / liquidity / entry gap, winners vs losers feature by feature, results by
+sector, and the 10 best and worst trades.
 Output: reports/strategies/<name>_trades_detail.csv
 """
 from __future__ import annotations
@@ -59,6 +62,28 @@ def enrich(trades: pd.DataFrame) -> pd.DataFrame:
              "price": P[s].iloc[sig] if sig >= 0 else np.nan,
              "adv_musd": adv[s].iloc[sig] / 1e6 if sig >= 0 else np.nan,
              "spy_trend": spy_trend.iloc[sig] if sig >= 0 else np.nan}
+        if sig >= 60:
+            c = C[s].iloc[: sig + 1].to_numpy(dtype=float)
+            v = V[s].iloc[: sig + 1].to_numpy(dtype=float)
+            low15 = pd.Series(c).rolling(15, min_periods=15).min().to_numpy()
+            g15 = c / low15 - 1
+            surge_idx = np.flatnonzero(g15 >= 1.0)
+            last = surge_idx[-1] if len(surge_idx) else -1
+            r.update({
+                "f_biggest_15d_gain": np.nanmax(g15),                       # size of the past surge
+                "f_surges_in_history": int((np.diff(np.r_[-99, surge_idx]) > 15).sum()) if len(surge_idx) else 0,
+                "f_days_since_surge": sig - last if last >= 0 else np.nan,
+                "f_drawdown_from_high": c[-1] / np.nanmax(c) - 1,          # how far it fell from its high
+                "f_above_1y_low": c[-1] / np.nanmin(c[-250:]) - 1,          # how far it is above its 1-year low
+                "f_ret_5": c[-1] / c[-6] - 1, "f_ret_20": c[-1] / c[-21] - 1, "f_ret_60": c[-1] / c[-61] - 1,
+                "f_range_10": np.nanmax(c[-10:]) / np.nanmin(c[-10:]) - 1,
+                "f_close_pos_10": (c[-1] - np.nanmin(c[-10:])) / max(np.nanmax(c[-10:]) - np.nanmin(c[-10:]), 1e-9),
+                "f_daily_vol_20": np.nanstd(np.diff(np.log(c[-21:]))),
+                "f_vol_5_vs_60": np.nanmean(v[-5:]) / np.nanmean(v[-60:]),
+                "f_vol_10_vs_prev50": np.nanmean(v[-10:]) / np.nanmean(v[-60:-10]),
+                "f_vol_up_days_10": int((np.diff(v[-11:]) > 0).sum()),
+                "f_dollar_vol_musd": np.nanmean(v[-20:] * P[s].iloc[sig - 19: sig + 1].to_numpy(dtype=float)) / 1e6,
+            })
         for h in HORIZONS:
             k = e + h - 1
             r[f"fwd_{h}"] = C[s].iloc[k] / entry - 1 if k < len(dates) else np.nan
@@ -136,7 +161,38 @@ def report(df: pd.DataFrame, name: str) -> None:
                               labels=["gap down >2%", "down 0-2%", "up 0-2%", "gap up >2%"])
     _grp(df, "gap_bucket", "entry-day gap")
 
-    # 5. extremes
+    # 5. what distinguishes winners from losers (all measured at the signal, before buying)
+    feats = [c for c in df.columns if c.startswith("f_")]
+    if feats:
+        rows = []
+        for f in feats:
+            x = df[f]
+            ok = x.notna()
+            if ok.sum() < 20:
+                continue
+            rho = x[ok].rank().corr(df.loc[ok, "ret_net"].rank())
+            q = pd.qcut(x[ok].rank(method="first"), 3, labels=["low", "mid", "high"])
+            by = df.loc[ok, "ret_net"].groupby(q, observed=True).mean()
+            rows.append({"feature": f[2:], "winners_median": x[win].median(), "losers_median": x[~win].median(),
+                         "rank_corr_with_return": rho, "t_approx": rho * np.sqrt(ok.sum() - 2) / np.sqrt(max(1 - rho ** 2, 1e-9)),
+                         "avg_trade_low_third": by.get("low"), "avg_trade_mid_third": by.get("mid"),
+                         "avg_trade_high_third": by.get("high")})
+        ft = pd.DataFrame(rows).set_index("feature").sort_values("t_approx", key=abs, ascending=False)
+        print("\n--- 5. winners vs losers: features at the signal (sorted by strength) ---")
+        show = ft.copy().astype(object)
+        for c in ["avg_trade_low_third", "avg_trade_mid_third", "avg_trade_high_third"]:
+            show[c] = ft[c].map(lambda v: "" if pd.isna(v) else f"{v:+.1%}")
+        for c in ["winners_median", "losers_median"]:
+            show[c] = ft[c].map(lambda v: "" if pd.isna(v) else f"{v:.3g}")
+        show["rank_corr_with_return"] = ft["rank_corr_with_return"].map("{:+.2f}".format)
+        show["t_approx"] = ft["t_approx"].map("{:+.1f}".format)
+        print(show.to_string())
+        print("|t| above ~2 hints at a real difference; with ~15 features, one or two will pass that by luck. "
+              "Treat these as ideas to test on later data, not as rules.")
+    if "sector" in df:
+        _grp(df, "sector", "sector")
+
+    # 6. extremes
     cols = ["symbol", "entry_date", "exit_date", "days", "exit", "ret_net", "mfe", "mae", "entry_gap", "price",
             "fwd_60"]
     pct = {"ret_net", "mfe", "mae", "entry_gap", "fwd_60"}
@@ -163,6 +219,13 @@ def main() -> None:
     if trades.empty:
         raise SystemExit("The backtest made no trades")
     df = enrich(trades)
+    try:
+        import fundamentals as FU
+        sec = FU.load_sectors()
+        if len(sec):
+            df["sector"] = df["symbol"].map(sec).map(lambda k: FU.SECTORS[int(k)] if pd.notna(k) else "Unknown")
+    except Exception:
+        pass
     out = RS.OUT / f"{args.name}_trades_detail.csv"
     df.to_csv(out, index=False)
     report(df, args.name)
