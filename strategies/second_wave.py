@@ -12,7 +12,7 @@ Rules (all parameters below can be changed)
   4. price sideways: over the last VOL_DAYS days the price moved at most FLAT_RET and its high/low range is at
      most FLAT_RANGE
   5. tradable: price >= MIN_PRICE, 60-day average dollar volume >= MIN_ADV
-  Exits: take-profit TP (+10%), stop-loss SL (-5%), at most MAX_DAYS (120) trading days.
+  Exits: take-profit TP (+20%), stop-loss SL (-10%), at most MAX_DAYS (120) trading days.
 
 second_wave_novol is the same without rule 3: if the full version is not clearly better, the volume rule adds
 nothing. Everything only uses data up to the signal day.
@@ -26,7 +26,7 @@ from engine import Order, Strategy
 class SecondWave(Strategy):
     def __init__(self, name, title, use_volume=True, *, surge_gain=1.0, surge_days=15, pullback=0.40,
                  min_days_since=60, vol_days=10, vol_up_days=8, flat_ret=0.05, flat_range=0.12, min_price=2.0,
-                 min_adv=1e6, tp=0.10, sl=0.05, max_days=120, max_pos=10, max_new=2, cost_bps=20.0,
+                 min_adv=1e6, tp=0.20, sl=0.10, max_days=120, max_pos=10, max_new=2, cost_bps=20.0,
                  start="2017-01-03"):
         self.name, self.title = name, title
         self.use_volume = use_volume
