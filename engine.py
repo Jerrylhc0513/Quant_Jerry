@@ -125,13 +125,15 @@ class MarketData:
         t0 = time.time()
         df = D.load_daily(start=start, end=end, adjusted=True,
                           columns=["open", "high", "low", "close", "volume", "ret"])
-        if D.BENCHMARK_FILE.exists():
-            b = D.load_benchmark("SPY")
+        if D.BENCHMARK_FILE.exists():                     # benchmark ETFs (SPY, QQQ, XLK) are tradable too
+            raw = pd.read_parquet(D.BENCHMARK_FILE)
+            b = pd.concat([D.add_adjusted(raw[raw["symbol"] == s_]) for s_ in raw["symbol"].unique()], ignore_index=True)
             if start is not None:
                 b = b[b["date"] >= pd.Timestamp(start)]
             if end is not None:
                 b = b[b["date"] <= pd.Timestamp(end)]
-            df = pd.concat([df[df["symbol"] != "SPY"], b[df.columns.intersection(b.columns)]], ignore_index=True)
+            df = pd.concat([df[~df["symbol"].isin(b["symbol"].unique())], b[df.columns.intersection(b.columns)]],
+                           ignore_index=True)
         piv = lambda c: df.pivot(index="date", columns="symbol", values=c).sort_index().astype("float32")
         self.C = piv("adj_close")
         al = lambda x: x.reindex_like(self.C)
@@ -325,7 +327,8 @@ def live(st: Strategy, md: MarketData, folder: Path) -> Book:
 
 
 # ============================== Metrics ==============================
-def metrics(nav: pd.Series, bench: pd.Series | None = None) -> dict:
+def metrics(nav: pd.Series, bench: pd.Series | None = None, bench2: pd.Series | None = None) -> dict:
+    """bench = SPY, bench2 = QQQ (optional)."""
     nav = nav.dropna()
     r = nav.pct_change().dropna()
     if len(r) < 20:
@@ -339,4 +342,8 @@ def metrics(nav: pd.Series, bench: pd.Series | None = None) -> dict:
         bann = (b.iloc[-1] / b.iloc[0]) ** (252 / len(r)) - 1
         out["spy_ann"] = bann
         out["excess_ann"] = ann - bann
+    if bench2 is not None:
+        b = bench2.reindex(nav.index).ffill()
+        if b.notna().all():
+            out["qqq_ann"] = (b.iloc[-1] / b.iloc[0]) ** (252 / len(r)) - 1
     return out

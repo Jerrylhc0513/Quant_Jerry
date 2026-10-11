@@ -21,6 +21,7 @@ nothing. Everything only uses data up to the signal day.
 import numpy as np
 import pandas as pd
 
+import data as D
 from engine import Order, Strategy
 
 
@@ -55,7 +56,7 @@ class SecondWave(Strategy):
 
     def prepare(self, md):
         p = self.p
-        C = md.C.drop(columns=["SPY"], errors="ignore")
+        C = md.C.drop(columns=D.BENCHMARKS, errors="ignore")       # ETFs are not candidates
         V = md.V[C.columns]
         Cn = C.to_numpy(dtype="float64")
         T, N = Cn.shape

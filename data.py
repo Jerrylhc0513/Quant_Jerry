@@ -106,7 +106,7 @@ SELECTION_FILE = DATA_DIR / "universe_selections.parquet"
 BENCHMARK_FILE = DATA_DIR / "benchmark.parquet"
 NO_DATA_FILE = DATA_DIR / "no_data_symbols.json"   # symbols that returned no bars (not retried)
 BACKFILL_MARK = DATA_DIR / "backfill_done.json"
-BENCHMARKS = ["SPY"]           # benchmark ETFs (never part of the universe)
+BENCHMARKS = ["SPY", "QQQ", "XLK"]   # benchmark ETFs (never part of the universe); QQQ / XLK for tech-only ideas
 
 BAR_COLS = ["ts", "symbol", "open", "high", "low", "close", "volume", "vwap", "trades"]
 DAILY_COLS = ["date", "symbol", "open", "high", "low", "close", "volume", "vwap", "trades", "ret"]

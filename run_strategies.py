@@ -60,6 +60,7 @@ def cmd_backtest(names, start=None) -> pd.DataFrame:
     sts = _pick(names)
     md = EN.MarketData()
     spy = md.C["SPY"] if "SPY" in md.C else None
+    qqq = md.C["QQQ"] if "QQQ" in md.C else None
     OUT.mkdir(parents=True, exist_ok=True)
     rows = []
     for name, st in sts.items():
@@ -80,7 +81,7 @@ def cmd_backtest(names, start=None) -> pd.DataFrame:
         hist.assign(spy=spy.reindex(nav.index).to_numpy() if spy is not None else np.nan).to_csv(
             OUT / f"{name}_nav.csv", index=False)
         tr.to_csv(OUT / f"{name}_trades.csv", index=False)
-        m = EN.metrics(nav, spy)
+        m = EN.metrics(nav, spy, qqq)
         rows.append({"strategy": name, "title": st.title, "start": nav.index[0].date(), "end": nav.index[-1].date(),
                      **m, **_trade_stats(tr)})
         log.info("%s done in %.0f s", name, time.time() - t0)
@@ -97,7 +98,7 @@ def cmd_backtest(names, start=None) -> pd.DataFrame:
 def _print(summ: pd.DataFrame) -> None:
     pd.set_option("display.width", 220)
     show = summ.copy()
-    pct = ["ann_return", "ann_vol", "max_drawdown", "spy_ann", "excess_ann", "win_rate", "avg_trade"]
+    pct = ["ann_return", "ann_vol", "max_drawdown", "spy_ann", "qqq_ann", "excess_ann", "win_rate", "avg_trade"]
     for c in show.columns:
         if c in pct:
             show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{v:+.1%}")
@@ -106,8 +107,8 @@ def _print(summ: pd.DataFrame) -> None:
         elif c in ("avg_days",):
             show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{v:.0f}")
     cols = [c for c in ["title", "start", "end", "ann_return", "ann_vol", "sharpe", "max_drawdown", "spy_ann",
-                        "excess_ann", "trades", "win_rate", "avg_trade", "avg_days"] if c in show]
-    print("\n===== Strategy comparison (backtests, net of costs; spy_ann = SPY over the same period) =====")
+                        "qqq_ann", "excess_ann", "trades", "win_rate", "avg_trade", "avg_days"] if c in show]
+    print("\n===== Strategy comparison (backtests, net of costs; spy_ann / qqq_ann = SPY / QQQ over the same period) =====")
     print(show[cols].to_string())
     print("\nOnly walk-forward strategies (factor wf scores, stealth, swing) are out-of-sample. Buy-and-hold of names "
           "picked today carries hindsight. Paper accounts (`live`) are the fair test going forward.")
@@ -141,6 +142,7 @@ def cmd_split(names, cut: str, start=None, end=None) -> pd.DataFrame:
     sts = _pick(names)
     md = EN.MarketData()
     spy = md.C["SPY"] if "SPY" in md.C else None
+    qqq = md.C["QQQ"] if "QQQ" in md.C else None
     cut_ts = pd.Timestamp(cut)
     rows = []
     for name, st in sts.items():
@@ -157,9 +159,9 @@ def cmd_split(names, cut: str, start=None, end=None) -> pd.DataFrame:
             if hist.empty:
                 continue
             nav = hist.set_index(pd.to_datetime(hist["date"]))["nav"]
-            m = EN.metrics(nav, spy)
+            m = EN.metrics(nav, spy, qqq)
             ts = _trade_stats(tr)
-            row.update({f"{tag}_ann": m.get("ann_return"), f"{tag}_spy": m.get("spy_ann"),
+            row.update({f"{tag}_ann": m.get("ann_return"), f"{tag}_spy": m.get("spy_ann"), f"{tag}_qqq": m.get("qqq_ann"),
                         f"{tag}_maxdd": m.get("max_drawdown"), f"{tag}_trades": ts.get("trades", 0),
                         f"{tag}_win": ts.get("win_rate"), f"{tag}_avg_trade": ts.get("avg_trade")})
         rows.append(row)
