@@ -14,7 +14,8 @@ Rules (all parameters below can be changed)
   5. tradable: price >= MIN_PRICE, 60-day average dollar volume >= MIN_ADV
   Exits: take-profit TP (+20%), stop-loss SL (-10%), at most MAX_DAYS (120) trading days.
 
-second_wave_novol is the same without rule 3: if the full version is not clearly better, the volume rule adds
+Versions: A (original), B (surge within 12 months, pullback 40-70%), C (B + SPY above its 200-day average),
+D (C + 20-day average price below $20). second_wave_novol is A without rule 3: if the full version is not clearly better, the volume rule adds
 nothing. Everything only uses data up to the signal day.
 """
 import numpy as np
@@ -27,17 +28,28 @@ class SecondWave(Strategy):
     def __init__(self, name, title, use_volume=True, *, surge_gain=1.0, surge_days=15, pullback=0.40,
                  min_days_since=60, vol_days=10, vol_up_days=8, flat_ret=0.05, flat_range=0.12, min_price=2.0,
                  min_adv=1e6, tp=0.20, sl=0.10, max_days=120, max_pos=10, max_new=2, cost_bps=20.0,
-                 start="2017-01-03"):
+                 start="2017-01-03", max_days_since=None, max_pullback=None, market_filter=False,
+                 max_avg_price=None):
         self.name, self.title = name, title
         self.use_volume = use_volume
         self.p = dict(surge_gain=surge_gain, surge_days=surge_days, pullback=pullback, min_days_since=min_days_since,
                       vol_days=vol_days, vol_up_days=vol_up_days, flat_ret=flat_ret, flat_range=flat_range,
-                      min_price=min_price, min_adv=min_adv)
+                      min_price=min_price, min_adv=min_adv, max_days_since=max_days_since,
+                      max_pullback=max_pullback, market_filter=market_filter, max_avg_price=max_avg_price)
         self.tp, self.sl, self.max_days = tp, sl, max_days
         self.max_pos, self.max_new = max_pos, max_new
         self.cost_bps, self.start = cost_bps, start
         vol = f"volume up on >= {vol_up_days} of {vol_days} days, " if use_volume else ""
-        self.description = (f"Once +{surge_gain:.0%} within {surge_days} days, now >= {pullback:.0%} below that peak; "
+        extra = ""
+        if max_days_since:
+            extra += f"surge within the last {max_days_since} days, "
+        if max_pullback:
+            extra += f"pullback at most {max_pullback:.0%}, "
+        if market_filter:
+            extra += "only when SPY is above its 200-day average, "
+        if max_avg_price:
+            extra += f"20-day average price below ${max_avg_price:g}, "
+        self.description = (f"Once +{surge_gain:.0%} within {surge_days} days, now >= {pullback:.0%} below that peak; {extra}"
                             f"{vol}price flat (<= {flat_ret:.0%} move, <= {flat_range:.0%} range over {vol_days} days); "
                             f"exits +{tp:.0%} / -{sl:.0%} / {max_days} days")
 
@@ -74,7 +86,19 @@ class SecondWave(Strategy):
         rng = (C.rolling(n, min_periods=n).max() / C.rolling(n, min_periods=n).min() - 1).to_numpy()
         flat = (ret_n <= p["flat_ret"]) & (rng <= p["flat_range"])
         # 5. tradable
-        ok = ((md.P[C.columns] >= p["min_price"]) & (md.ADV[C.columns] >= p["min_adv"])).to_numpy()
+        ok = ((md.P[C.columns] >= p["min_price"]) & (md.ADV[C.columns] >= p["min_adv"])).to_numpy().copy()
+        # optional refinements (versions B, C, D)
+        if p["max_days_since"]:
+            pulled &= since <= p["max_days_since"]
+        if p["max_pullback"]:
+            with np.errstate(invalid="ignore"):
+                pulled &= Cn >= peak * (1 - p["max_pullback"])
+        if p["market_filter"] and "SPY" in md.C:
+            spy = md.C["SPY"].ffill()
+            up = (spy > spy.rolling(200, min_periods=150).mean()).to_numpy()
+            ok &= up[:, None]
+        if p["max_avg_price"]:
+            ok &= (md.P[C.columns].rolling(20, min_periods=15).mean() < p["max_avg_price"]).to_numpy()
         sig = pulled & flat & ok & (vol_ok if self.use_volume else True)
         # rank same-day signals: steadier volume build-up first, then deeper pullback
         vol_ratio = (V.rolling(5).mean() / V.rolling(60, min_periods=40).mean()).to_numpy()
@@ -97,5 +121,15 @@ class SecondWave(Strategy):
         return out
 
 
-SECOND_WAVE = SecondWave("second_wave", "Second wave (surge, pullback, volume building)")
-SECOND_WAVE_NOVOL = SecondWave("second_wave_novol", "Second wave without the volume rule (control)", use_volume=False)
+# A: the original rules
+SECOND_WAVE = SecondWave("second_wave", "Second wave A: original rules")
+SECOND_WAVE_NOVOL = SecondWave("second_wave_novol", "Second wave A without the volume rule (control)", use_volume=False)
+# B: the surge must be recent (last 12 months) and the pullback 40-70%: a real "rose, pulled back, rises again"
+SECOND_WAVE_B = SecondWave("second_wave_b", "Second wave B: recent surge (12 months), pullback 40-70%",
+                           max_days_since=250, max_pullback=0.70)
+# C: B, only while the market is in an uptrend
+SECOND_WAVE_C = SecondWave("second_wave_c", "Second wave C: B + SPY above its 200-day average",
+                           max_days_since=250, max_pullback=0.70, market_filter=True)
+# D: C, only stocks whose 20-day average price is below $20
+SECOND_WAVE_D = SecondWave("second_wave_d", "Second wave D: C + 20-day average price below $20",
+                           max_days_since=250, max_pullback=0.70, market_filter=True, max_avg_price=20.0)

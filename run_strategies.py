@@ -6,6 +6,7 @@ run_strategies.py - run every strategy in strategies/ through the same engine an
   python run_strategies.py backtest                     backtest all enabled strategies, print a comparison
   python run_strategies.py backtest stealth spy_hold    only some
   python run_strategies.py live                         advance every paper account to today (run_daily.bat)
+  python run_strategies.py split A B --cut 2022-01-01   train period before the cut, test period after it
 
 Backtests: reports/strategies/<name>_nav.csv, <name>_trades.csv, summary.csv
 Paper accounts ($100,000 each, every signal filled at the next open with costs):
@@ -134,17 +135,63 @@ def cmd_live(names) -> None:
         raise SystemExit(f"Strategies that failed: {failed} (the others were updated)")
 
 
+def cmd_split(names, cut: str, start=None, end=None) -> pd.DataFrame:
+    """Backtest each strategy separately on a training period (before `cut`) and a test period (from `cut`).
+    Choose between strategies using the training columns only; the test columns show whether the choice holds."""
+    sts = _pick(names)
+    md = EN.MarketData()
+    spy = md.C["SPY"] if "SPY" in md.C else None
+    cut_ts = pd.Timestamp(cut)
+    rows = []
+    for name, st in sts.items():
+        try:
+            st.prepare(md)
+        except SystemExit as e:
+            log.warning("%s skipped: %s", name, e)
+            continue
+        row = {"strategy": name}
+        for tag, a, b in (("train", start, cut_ts - pd.Timedelta(days=1)), ("test", cut_ts, end)):
+            book = EN.backtest(st, md, start=a, end=b, prepared=True)
+            hist = pd.DataFrame(book.history)
+            tr = pd.DataFrame(book.trades)
+            if hist.empty:
+                continue
+            nav = hist.set_index(pd.to_datetime(hist["date"]))["nav"]
+            m = EN.metrics(nav, spy)
+            ts = _trade_stats(tr)
+            row.update({f"{tag}_ann": m.get("ann_return"), f"{tag}_spy": m.get("spy_ann"),
+                        f"{tag}_maxdd": m.get("max_drawdown"), f"{tag}_trades": ts.get("trades", 0),
+                        f"{tag}_win": ts.get("win_rate"), f"{tag}_avg_trade": ts.get("avg_trade")})
+        rows.append(row)
+        log.info("%s done", name)
+    out = pd.DataFrame(rows).set_index("strategy")
+    show = out.copy().astype(object)
+    for c in out.columns:
+        if not c.endswith("_trades"):
+            show[c] = out[c].map(lambda v: "" if pd.isna(v) else f"{v:+.1%}")
+    pd.set_option("display.width", 220)
+    print(f"\n===== Training period (before {cut_ts.date()}) vs test period (from {cut_ts.date()}), net of costs =====")
+    print(show.to_string())
+    print("\nPick using the train_* columns only. The choice is believable if its test_* columns are also good.")
+    OUT.mkdir(parents=True, exist_ok=True)
+    out.to_csv(OUT / "split_summary.csv")
+    return out
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Run and compare the strategies in strategies/")
-    p.add_argument("cmd", choices=["list", "backtest", "live"])
+    p.add_argument("cmd", choices=["list", "backtest", "live", "split"])
     p.add_argument("names", nargs="*", help="strategy names (default: all enabled)")
     p.add_argument("--start", help="backtest: first signal date for every strategy")
+    p.add_argument("--cut", default="2022-01-01", help="split: first day of the test period")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     if args.cmd == "list":
         cmd_list()
     elif args.cmd == "backtest":
         cmd_backtest(args.names, args.start)
+    elif args.cmd == "split":
+        cmd_split(args.names, args.cut, args.start)
     else:
         cmd_live(args.names)
 

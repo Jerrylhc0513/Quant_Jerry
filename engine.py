@@ -299,10 +299,17 @@ def run(st: Strategy, md: MarketData, book: Book, first: int, last: int | None =
     return book
 
 
-def backtest(st: Strategy, md: MarketData) -> Book:
-    st.prepare(md)
+def backtest(st: Strategy, md: MarketData, start=None, end=None, prepared: bool = False) -> Book:
+    """start / end (dates) limit the signal days, e.g. to split history into a training and a test period.
+    Positions still open at `end` stay open (valued at the last close)."""
+    if not prepared:
+        st.prepare(md)
     book = Book(cash=st.capital)
-    run(st, md, book, st.first_day(md))
+    first = st.first_day(md)
+    if start is not None:
+        first = max(first, int(md.dates.searchsorted(pd.Timestamp(start))))
+    last = None if end is None else int(md.dates.searchsorted(pd.Timestamp(end), side="right")) - 1
+    run(st, md, book, first, last)
     return book
 
 
