@@ -138,6 +138,20 @@ The real account only rebalances about once a month, so most evenings need nothi
 
 Local preview: `python export_site.py`, then `streamlit run app.py`. To publish: push the folder to GitHub (`.gitignore` already excludes `.env`, `data\`, `portfolio\`, `reports\`, `logs\`), create an app on share.streamlit.io with main file `app.py`, then set `PUBLISH=1` in `run_daily.bat`. Set `SITE_SHOW_REAL_AMOUNTS=0` in `.env` to hide your real dollar amounts.
 
+## TechDist research (tech basket, return distributions)
+
+A separate research line on ~10 large tech / AI stocks, 2020 onwards only: predict the whole
+distribution of each stock's next 1-5 day return, then (later) trade the best names with intraday
+limit orders. Design, pass rules and build plan: `docs/TECHDIST.md`. Steps P0-P3 are built:
+
+```
+python td_data.py update          :: own data folder data\td\ (daily + minute bars, ~15-20 min first time)
+python td_features.py --check     :: look-ahead test, must print OK three times
+python td_features.py
+python td_model.py                :: walk-forward models M0 / M1 / M2 / ENS, horizons 1, 3, 5
+python td_eval.py                 :: forecast quality on dev (2021-23) and val (2024); test stays locked
+```
+
 ## FAQ
 
 - **No email**: check today's log in `logs\`; run `python check_email.py`.
