@@ -43,11 +43,21 @@ class TechCore(Strategy):
         C = md.C[self.syms].astype("float64")
         self.R = np.log(C).diff()
         self.sig = self.R.ewm(halflife=11, min_periods=20).std() * np.sqrt(252)
-        if "QQQ" in md.C:
-            q = md.C["QQQ"].astype("float64").ffill()
-            self.up = (q > q.rolling(200, min_periods=150).mean()).to_numpy()
-        else:
+        q = md.C["QQQ"].astype("float64") if "QQQ" in md.C and md.C["QQQ"].notna().sum() > 200 else None
+        if q is None:                                  # benchmark file without QQQ: use the TechDist copy
+            try:
+                import td_data as T
+                d = T.load_daily(["QQQ"])
+                q = d.set_index("date")["adj_close"].reindex(md.dates)
+            except (OSError, KeyError):
+                q = None
+        if q is None or q.notna().sum() < 200:
+            if self.trend:
+                raise SystemExit("no QQQ prices for the trend switch: run python data.py update")
             self.up = np.ones(len(md.dates), dtype=bool)
+        else:
+            q = q.ffill()
+            self.up = (q > q.rolling(200, min_periods=150).mean()).to_numpy()
         self.Cn = C.to_numpy()
 
     def target(self, i) -> dict:
