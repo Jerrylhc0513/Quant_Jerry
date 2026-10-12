@@ -336,7 +336,8 @@ def metrics(nav: pd.Series, bench: pd.Series | None = None, bench2: pd.Series | 
     ann = (nav.iloc[-1] / nav.iloc[0]) ** (252 / len(r)) - 1
     dd = (nav / nav.cummax() - 1).min()
     out = {"ann_return": ann, "ann_vol": r.std() * np.sqrt(252),
-           "sharpe": r.mean() / r.std() * np.sqrt(252) if r.std() > 0 else np.nan, "max_drawdown": dd}
+           "sharpe": r.mean() / r.std() * np.sqrt(252) if r.std() > 0 else np.nan, "max_drawdown": dd,
+           "calmar": ann / abs(dd) if dd < 0 else np.nan}
     if bench is not None:
         b = bench.reindex(nav.index).ffill()
         bann = (b.iloc[-1] / b.iloc[0]) ** (252 / len(r)) - 1

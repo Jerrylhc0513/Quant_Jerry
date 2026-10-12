@@ -102,11 +102,11 @@ def _print(summ: pd.DataFrame) -> None:
     for c in show.columns:
         if c in pct:
             show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{v:+.1%}")
-        elif c in ("sharpe",):
+        elif c in ("sharpe", "calmar"):
             show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
         elif c in ("avg_days",):
             show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{v:.0f}")
-    cols = [c for c in ["title", "start", "end", "ann_return", "ann_vol", "sharpe", "max_drawdown", "spy_ann",
+    cols = [c for c in ["title", "start", "end", "ann_return", "ann_vol", "sharpe", "max_drawdown", "calmar", "spy_ann",
                         "qqq_ann", "excess_ann", "trades", "win_rate", "avg_trade", "avg_days"] if c in show]
     print("\n===== Strategy comparison (backtests, net of costs; spy_ann / qqq_ann = SPY / QQQ over the same period) =====")
     print(show[cols].to_string())
