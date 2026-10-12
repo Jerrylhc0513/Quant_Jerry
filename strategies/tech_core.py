@@ -93,7 +93,10 @@ class TechCore(Strategy):
         orders = [Order(s, weight=0.0, reason="left the basket") for s in cur if s not in tgt]
         for s, w in tgt.items():
             if abs(w - cur.get(s, 0.0)) > self.band or (switched and abs(w - cur.get(s, 0.0)) > 1e-4):
-                why = "risk-off (QQQ below 200-day avg)" if self.trend and not regime else "rebalance"
+                if switched:
+                    why = "risk-on (QQQ back above 200-day avg)" if regime else "risk-off (QQQ below 200-day avg)"
+                else:
+                    why = "rebalance" + (" while risk-off" if self.trend and not regime else "")
                 orders.append(Order(s, weight=w, reason=why))
         return orders
 

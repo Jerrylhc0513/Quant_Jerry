@@ -7,6 +7,7 @@ run_strategies.py - run every strategy in strategies/ through the same engine an
   python run_strategies.py backtest stealth spy_hold    only some
   python run_strategies.py live                         advance every paper account to today (run_daily.bat)
   python run_strategies.py split A B --cut 2022-01-01   train period before the cut, test period after it
+  python run_strategies.py fills A [--detail]           every order A executed in its backtest
 
 Backtests: reports/strategies/<name>_nav.csv, <name>_trades.csv, summary.csv
 Paper accounts ($100,000 each, every signal filled at the next open with costs):
@@ -81,6 +82,7 @@ def cmd_backtest(names, start=None) -> pd.DataFrame:
         hist.assign(spy=spy.reindex(nav.index).to_numpy() if spy is not None else np.nan).to_csv(
             OUT / f"{name}_nav.csv", index=False)
         tr.to_csv(OUT / f"{name}_trades.csv", index=False)
+        pd.DataFrame(book.fills).to_csv(OUT / f"{name}_fills.csv", index=False)
         m = EN.metrics(nav, spy, qqq)
         rows.append({"strategy": name, "title": st.title, "start": nav.index[0].date(), "end": nav.index[-1].date(),
                      **m, **_trade_stats(tr)})
@@ -180,18 +182,67 @@ def cmd_split(names, cut: str, start=None, end=None) -> pd.DataFrame:
     return out
 
 
+def cmd_fills(names, start=None, detail: bool = False) -> None:
+    """Every order a strategy executed in its backtest: counts per year, each trading day, optionally each fill."""
+    sts = _pick(names)
+    md = EN.MarketData()
+    OUT.mkdir(parents=True, exist_ok=True)
+    pd.set_option("display.width", 220)
+    pd.set_option("display.max_rows", 2000)
+    for name, st in sts.items():
+        if start:
+            st.start = start
+        book = EN.backtest(st, md)
+        f = pd.DataFrame(book.fills)
+        f.to_csv(OUT / f"{name}_fills.csv", index=False)
+        print(f"\n===== {name}: {st.title} =====")
+        if f.empty:
+            print("no orders executed")
+            continue
+        hist = pd.DataFrame(book.history).set_index("date")
+        expo = 1 - hist["cash"] / hist["nav"]
+        f["year"] = f["date"].str[:4]
+        cost = f["usd"].sum() * st.cost_bps / 1e4
+        nav_avg = hist.groupby(hist.index.str[:4])["nav"].mean()
+        per_year = f.groupby("year").agg(orders=("symbol", "size"), trade_days=("date", "nunique"),
+                                         traded_usd=("usd", "sum"))
+        per_year["turnover"] = per_year["traded_usd"] / nav_avg.reindex(per_year.index)
+        print(f"{len(f)} orders on {f['date'].nunique()} days; actions {f['action'].value_counts().to_dict()}; "
+              f"total traded ${f['usd'].sum():,.0f}, costs about ${cost:,.0f} at {st.cost_bps:g} bp per side")
+        print("\nPer year (turnover = traded dollars / average account value):")
+        print(per_year.assign(traded_usd=per_year["traded_usd"].map("${:,.0f}".format),
+                              turnover=per_year["turnover"].map("{:.0%}".format)).to_string())
+        days = f.groupby("date").agg(orders=("symbol", "size"),
+                                     buys=("usd", lambda x: x[f.loc[x.index, "action"].isin(["BUY", "ADD"])].sum()),
+                                     sells=("usd", lambda x: x[f.loc[x.index, "action"].isin(["SELL", "REDUCE"])].sum()),
+                                     reason=("reason", lambda x: x.mode().iloc[0]))
+        days["invested_after"] = expo.reindex(days.index)
+        days["nav_after"] = hist["nav"].reindex(days.index)
+        print("\nEvery trading day:")
+        print(days.assign(buys=days["buys"].map("${:,.0f}".format), sells=days["sells"].map("${:,.0f}".format),
+                          invested_after=days["invested_after"].map("{:.0%}".format),
+                          nav_after=days["nav_after"].map("${:,.0f}".format)).to_string())
+        if detail:
+            print("\nEvery order:")
+            print(f.drop(columns=["year"]).to_string(index=False))
+        print(f"\nFull list: {OUT / (name + '_fills.csv')}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Run and compare the strategies in strategies/")
-    p.add_argument("cmd", choices=["list", "backtest", "live", "split"])
+    p.add_argument("cmd", choices=["list", "backtest", "live", "split", "fills"])
     p.add_argument("names", nargs="*", help="strategy names (default: all enabled)")
     p.add_argument("--start", help="backtest: first signal date for every strategy")
     p.add_argument("--cut", default="2022-01-01", help="split: first day of the test period")
+    p.add_argument("--detail", action="store_true", help="fills: also print every single order")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     if args.cmd == "list":
         cmd_list()
     elif args.cmd == "backtest":
         cmd_backtest(args.names, args.start)
+    elif args.cmd == "fills":
+        cmd_fills(args.names, args.start, args.detail)
     elif args.cmd == "split":
         cmd_split(args.names, args.cut, args.start)
     else:

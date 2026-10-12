@@ -77,6 +77,7 @@ class Book:
     state: dict = field(default_factory=dict)           # free storage for the strategy
     history: list = field(default_factory=list)         # daily records
     trades: list = field(default_factory=list)          # closed trades
+    fills: list = field(default_factory=list)           # every executed order (buys, sells, resizes)
     last_date: str | None = None
 
     @property
@@ -96,6 +97,7 @@ class Book:
         (folder / "book.json").write_text(json.dumps(st, indent=1), encoding="utf-8")
         pd.DataFrame(self.history).to_csv(folder / "history.csv", index=False)
         pd.DataFrame(self.trades).to_csv(folder / "trades.csv", index=False)
+        pd.DataFrame(self.fills).to_csv(folder / "fills.csv", index=False)
 
     @classmethod
     def load(cls, folder: Path, capital: float) -> "Book":
@@ -106,7 +108,7 @@ class Book:
         b = cls(cash=st["cash"], state=st.get("state", {}), last_date=st.get("last_date"))
         b.positions = {p["symbol"]: Position(**p) for p in st.get("positions", [])}
         b.pending = [Order(**o) for o in st.get("pending", [])]
-        for name, attr in (("history.csv", "history"), ("trades.csv", "trades")):
+        for name, attr in (("history.csv", "history"), ("trades.csv", "trades"), ("fills.csv", "fills")):
             p = folder / name
             if p.exists() and p.stat().st_size > 0:
                 try:
@@ -174,13 +176,23 @@ class Strategy:
 
 
 # ============================== Engine ==============================
-def _close(book: Book, p: Position, value: float, date, why: str, c: float) -> None:
+def _fill(book: Book, date, symbol: str, action: str, usd: float, price: float, reason: str) -> None:
+    """usd: cash paid (buy, incl. costs) or received (sell, after costs). price: adjusted price used."""
+    nav = book.nav
+    w = book.positions[symbol].value / nav if symbol in book.positions and nav > 0 else 0.0
+    book.fills.append({"date": str(date.date()), "symbol": symbol, "action": action, "usd": round(usd, 2),
+                       "adj_price": round(float(price), 4) if np.isfinite(price) else np.nan,
+                       "weight_after": round(w, 4), "reason": reason})
+
+
+def _close(book: Book, p: Position, value: float, date, why: str, c: float, price: float = np.nan) -> None:
     proceeds = value * (1 - c)
     book.cash += proceeds
     book.trades.append({"symbol": p.symbol, "entry_date": p.entry_date, "exit_date": str(date.date()),
                         "days": p.days, "ret_net": proceeds / p.invested - 1 if p.invested > 0 else np.nan,
                         "exit": why, "entry_reason": p.reason})
     del book.positions[p.symbol]
+    _fill(book, date, p.symbol, "SELL", proceeds, price, why)
 
 
 def step(st: Strategy, md: MarketData, book: Book, i: int) -> None:
@@ -211,12 +223,13 @@ def step(st: Strategy, md: MarketData, book: Book, i: int) -> None:
             book.pending.append(o)                         # no open price today: try again tomorrow
             continue
         if o.weight <= 0:
-            _close(book, p, p.value, date, o.reason or "signal", c)
+            _close(book, p, p.value, date, o.reason or "signal", c, opens[o.symbol])
         else:
             cut = p.value - o.weight * nav_open
             book.cash += cut * (1 - c)
             p.invested *= (p.value - cut) / p.value
             p.value -= cut
+            _fill(book, date, o.symbol, "REDUCE", cut * (1 - c), opens[o.symbol], o.reason)
     for o in buys:
         if o.symbol not in opens:
             o_px = md.px("O", i, o.symbol)
@@ -238,6 +251,7 @@ def step(st: Strategy, md: MarketData, book: Book, i: int) -> None:
         else:
             book.positions[o.symbol] = Position(o.symbol, str(date.date()), usd / (1 + c), usd, tp=o.tp, sl=o.sl,
                                                 max_days=o.max_days, last_i=-1, reason=o.reason)
+        _fill(book, date, o.symbol, "ADD" if have else "BUY", usd, opens[o.symbol], o.reason)
     # ---- 3. intraday exit lines ----
     for p in list(book.positions.values()):
         o, h, l = opens.get(p.symbol), md.px("H", i, p.symbol), md.px("L", i, p.symbol)
@@ -246,10 +260,10 @@ def step(st: Strategy, md: MarketData, book: Book, i: int) -> None:
         g_open = p.g
         if p.sl is not None and g_open * l / o <= 1 - p.sl:
             exit_g = min(g_open, 1 - p.sl)
-            _close(book, p, p.value * exit_g / g_open, date, "stop line", c)
+            _close(book, p, p.value * exit_g / g_open, date, "stop line", c, o * exit_g / g_open)
         elif p.tp is not None and g_open * h / o >= 1 + p.tp:
             exit_g = max(g_open, 1 + p.tp)
-            _close(book, p, p.value * exit_g / g_open, date, "profit line", c)
+            _close(book, p, p.value * exit_g / g_open, date, "profit line", c, o * exit_g / g_open)
     # ---- 4. close: marks, holding time, missing data ----
     for p in list(book.positions.values()):
         cl = md.px("C", i, p.symbol)
@@ -266,7 +280,7 @@ def step(st: Strategy, md: MarketData, book: Book, i: int) -> None:
         if p.missing >= MISSING_DAYS:
             _close(book, p, p.value, date, "no more prices", c)
         elif p.max_days is not None and p.days >= p.max_days:
-            _close(book, p, p.value, date, "time", c)
+            _close(book, p, p.value, date, "time", c, cl)
     book.history.append({"date": str(date.date()), "nav": round(book.nav, 2), "cash": round(book.cash, 2),
                          "n_pos": len(book.positions)})
     book.last_date = str(date.date())
