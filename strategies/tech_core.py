@@ -31,10 +31,11 @@ START = "2020-01-02"
 
 class TechCore(Strategy):
     def __init__(self, name, title, description, vol_target=None, trend=False, floor=0.5,
-                 rebalance=5, band=0.02):
+                 rebalance=5, band=0.02, buffer=0.0, whole=False):
         self.name, self.title, self.description = name, title, description
         self.vol_target, self.trend, self.floor = vol_target, trend, floor
-        self.rebalance, self.band = rebalance, band
+        self.rebalance, self.band, self.buffer = rebalance, band, buffer
+        self.whole = whole          # True: one stock off by > band re-balances every stock (stays invested)
         self.cost_bps = 5.0
         self.start = START
 
@@ -57,7 +58,21 @@ class TechCore(Strategy):
             self.up = np.ones(len(md.dates), dtype=bool)
         else:
             q = q.ffill()
-            self.up = (q > q.rolling(200, min_periods=150).mean()).to_numpy()
+            ma = q.rolling(200, min_periods=150).mean()
+            if self.buffer <= 0:
+                self.up = (q > ma).to_numpy()
+            else:                                      # hysteresis: switch only on a clear break
+                qa, ma_ = q.to_numpy(), ma.to_numpy()
+                up = np.ones(len(qa), dtype=bool)
+                state = True
+                for t in range(len(qa)):
+                    if np.isfinite(qa[t]) and np.isfinite(ma_[t]):
+                        if state and qa[t] < ma_[t] * (1 - self.buffer):
+                            state = False
+                        elif not state and qa[t] > ma_[t] * (1 + self.buffer):
+                            state = True
+                    up[t] = state
+                self.up = up
         self.Cn = C.to_numpy()
 
     def target(self, i) -> dict:
@@ -91,8 +106,10 @@ class TechCore(Strategy):
         tgt = self.target(i)
         cur = book.weights()
         orders = [Order(s, weight=0.0, reason="left the basket") for s in cur if s not in tgt]
+        off = {s: abs(w - cur.get(s, 0.0)) for s, w in tgt.items()}
+        go_all = self.whole and max(off.values(), default=0.0) > self.band
         for s, w in tgt.items():
-            if abs(w - cur.get(s, 0.0)) > self.band or (switched and abs(w - cur.get(s, 0.0)) > 1e-4):
+            if (off[s] > 0.005 if go_all else off[s] > self.band) or (switched and off[s] > 1e-4):
                 if switched:
                     why = "risk-on (QQQ back above 200-day avg)" if regime else "risk-off (QQQ below 200-day avg)"
                 else:
@@ -114,3 +131,11 @@ TECH10_VOL = TechCore("tech10_vol", "Tech basket, volatility-managed",
 TECH10_VOL_TREND = TechCore("tech10_vol_trend", "Tech basket, volatility-managed + trend switch",
                             "tech10_vol, and only half of that while QQQ is below its 200-day average",
                             vol_target=0.20, trend=True)
+# Added after seeing tech10_trend's order list (2020-2026: 24 switches, about 18 of them reversed within
+# 1-3 days, plus many orders of a few dollars). Same idea, two fixed changes: the regime only flips when
+# QQQ closes more than 2% beyond its 200-day average, and a stock is only traded when its weight is more
+# than 2 percentage points away from target (then every stock off by more than 0.5 points is re-balanced). Judge it with that history in mind (one round of changes).
+TECH10_TREND_BUF = TechCore("tech10_trend_buf", "Tech basket + QQQ trend switch with a 2% buffer",
+                            "Equal weights; 50% invested after QQQ closes 2% below its 200-day average, back to "
+                            "100% after it closes 2% above; only trades weights off by more than 2 points",
+                            trend=True, rebalance=21, band=0.02, buffer=0.02, whole=True)
